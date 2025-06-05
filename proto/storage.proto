@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package tritontube;
+
+option go_package = "internal/proto;proto";
+
+// StorageService defines the service provided by storage servers
+service StorageService {
+    // Read retrieves a file from the storage server
+    rpc Read(ReadRequest) returns (ReadResponse);
+    // Write stores a file on the storage server
+    rpc Write(WriteRequest) returns (WriteResponse);
+    // Delete removes a file from the storage server
+    rpc Delete(DeleteRequest) returns (DeleteResponse);
+}
+
+// ReadRequest defines the request for reading a file
+message ReadRequest {
+    string video_id = 1;  // ID of the video
+    string filename = 2;  // Name of the file
+}
+
+// ReadResponse defines the response for reading a file
+message ReadResponse {
+    bytes data = 1;  // File content
+}
+
+// WriteRequest defines the request for writing a file
+message WriteRequest {
+    string video_id = 1;  // ID of the video
+    string filename = 2;  // Name of the file
+    bytes data = 3;      // File content
+}
+
+// WriteResponse defines the response for writing a file
+message WriteResponse {
+    // Empty response indicates success
+}
+
+// DeleteRequest defines the request for deleting a file
+message DeleteRequest {
+    string video_id = 1;  // ID of the video
+    string filename = 2;  // Name of the file
+}
+
+// DeleteResponse defines the response for deleting a file
+message DeleteResponse {
+    // Empty response indicates success
+} 
