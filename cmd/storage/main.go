@@ -6,55 +6,57 @@ import (
 	"log"
 	"net"
 	"os"
-	"os/signal"
-	"syscall"
+	"path/filepath"
 
-	"internal/storage"
+	"tritontube/internal/proto"
+	"tritontube/internal/storage"
+
+	"google.golang.org/grpc"
 )
 
 func main() {
-	host := flag.String("host", "localhost", "Host address for the server")
-	port := flag.Int("port", 8090, "Port number for the server")
+	// Parse command line flags
+	port := flag.Int("port", 8080, "Port to listen on")
 	flag.Parse()
 
-	// Validate arguments
-	if *port <= 0 {
-		log.Fatal("Error: Port number must be positive")
+	// Get storage directory from positional argument
+	if flag.NArg() != 1 {
+		log.Fatal("Usage: ./storage -port PORT STORAGE_DIR")
 	}
+	rootDir := flag.Arg(0)
 
-	if flag.NArg() < 1 {
-		fmt.Println("Usage: storage [OPTIONS] <baseDir>")
-		fmt.Println("Error: Base directory argument is required")
-		os.Exit(1)
-	}
-	baseDir := flag.Arg(0)
-
-	// Create server instance
-	server, err := storage.NewServer(baseDir)
+	// Create root directory
+	absRootDir, err := filepath.Abs(rootDir)
 	if err != nil {
-		log.Fatalf("Failed to create server: %v", err)
+		log.Fatalf("Failed to get absolute path for root directory: %v", err)
 	}
 
-	// Create listener
-	addr := fmt.Sprintf("%s:%d", *host, *port)
-	lis, err := net.Listen("tcp", addr)
+	// Create storage directory if it doesn't exist
+	if err := os.MkdirAll(absRootDir, 0755); err != nil {
+		log.Fatalf("Failed to create storage directory: %v", err)
+	}
+
+	// Create storage server
+	server, err := storage.NewServer(absRootDir)
+	if err != nil {
+		log.Fatalf("Failed to create storage server: %v", err)
+	}
+
+	// Create gRPC server with increased message size limit
+	grpcServer := grpc.NewServer(
+		grpc.MaxRecvMsgSize(32*1024*1024), // 32MB max receive size
+		grpc.MaxSendMsgSize(32*1024*1024), // 32MB max send size
+	)
+	proto.RegisterStorageServiceServer(grpcServer, server)
+
+	// Start listening
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
 
-	// Handle signals for graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		sig := <-sigChan
-		log.Printf("Received signal %v, shutting down...", sig)
-		server.Stop()
-	}()
-
-	// Start server
-	log.Printf("Starting storage server on %s", addr)
-	log.Printf("Base directory: %s", baseDir)
-	if err := server.Start(lis); err != nil {
+	log.Printf("Storage server listening on port %d, storing videos in %s", *port, absRootDir)
+	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatalf("Failed to serve: %v", err)
 	}
 }
