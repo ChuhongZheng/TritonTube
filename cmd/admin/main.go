@@ -20,7 +20,7 @@ func main() {
 	cmd := os.Args[1]
 	serverAddr := os.Args[2]
 
-	conn, err := grpc.NewClient(serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(serverAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("Failed to connect to server: %v", err)
 	}
