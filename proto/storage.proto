@@ -4,46 +4,46 @@ package tritontube;
 
 option go_package = "internal/proto;proto";
 
-// StorageService defines the service provided by storage servers
+// Storage service for video content
 service StorageService {
-    // Read retrieves a file from the storage server
+    // Read video content from storage
     rpc Read(ReadRequest) returns (ReadResponse);
-    // Write stores a file on the storage server
+    // Write video content to storage
     rpc Write(WriteRequest) returns (WriteResponse);
-    // Delete removes a file from the storage server
+    // Delete video content from storage
     rpc Delete(DeleteRequest) returns (DeleteResponse);
+    // List all videos in storage
+    rpc List(ListRequest) returns (ListResponse);
 }
 
-// ReadRequest defines the request for reading a file
 message ReadRequest {
-    string video_id = 1;  // ID of the video
-    string filename = 2;  // Name of the file
+    string video_id = 1;
+    string filename = 2;
 }
 
-// ReadResponse defines the response for reading a file
 message ReadResponse {
-    bytes data = 1;  // File content
+    bytes data = 1;
 }
 
-// WriteRequest defines the request for writing a file
 message WriteRequest {
-    string video_id = 1;  // ID of the video
-    string filename = 2;  // Name of the file
-    bytes data = 3;      // File content
+    string video_id = 1;
+    string filename = 2;
+    bytes data = 3;
 }
 
-// WriteResponse defines the response for writing a file
 message WriteResponse {
-    // Empty response indicates success
+    int64 size = 1;
 }
 
-// DeleteRequest defines the request for deleting a file
 message DeleteRequest {
-    string video_id = 1;  // ID of the video
-    string filename = 2;  // Name of the file
+    string video_id = 1;
+    string filename = 2;
 }
 
-// DeleteResponse defines the response for deleting a file
-message DeleteResponse {
-    // Empty response indicates success
+message DeleteResponse {}
+
+message ListRequest {}
+
+message ListResponse {
+    repeated string video_ids = 1;
 } 
