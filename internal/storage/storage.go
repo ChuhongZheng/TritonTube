@@ -5,154 +5,125 @@ package storage
 import (
 	"context"
 	"fmt"
-	"io"
-	"net"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 
-	pb "internal/proto"
-	"google.golang.org/grpc"
+	"tritontube/internal/proto"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// Server represents a storage server instance
 type Server struct {
-	pb.UnimplementedStorageServiceServer
-	baseDir string
-	grpcServer *grpc.Server
+	proto.UnimplementedStorageServiceServer
+	rootDir string
+	mu      sync.RWMutex
 }
 
-// NewServer creates a new storage server instance
-func NewServer(baseDir string) (*Server, error) {
-	// Ensure base directory exists
-	if err := os.MkdirAll(baseDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create base directory: %v", err)
+func NewServer(rootDir string) (*Server, error) {
+	// Create root directory if it doesn't exist
+	if err := os.MkdirAll(rootDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create root directory: %v", err)
 	}
 
 	return &Server{
-		baseDir: baseDir,
-		grpcServer: grpc.NewServer(),
+		rootDir: rootDir,
 	}, nil
 }
 
-// Start starts the storage server on the given listener
-func (s *Server) Start(lis net.Listener) error {
-	pb.RegisterStorageServiceServer(s.grpcServer, s)
-	return s.grpcServer.Serve(lis)
+// getFilePath returns the full path for a file, using videoId/filename directory structure
+func (s *Server) getFilePath(videoId string, filename string) string {
+	// Replace any path separators in videoId and filename with underscores for safety
+	safeVideoId := strings.ReplaceAll(videoId, string(os.PathSeparator), "_")
+	safeFilename := strings.ReplaceAll(filename, string(os.PathSeparator), "_")
+
+	// Use directory structure: rootDir/videoId/filename
+	return filepath.Join(s.rootDir, safeVideoId, safeFilename)
 }
 
-// Stop stops the storage server
-func (s *Server) Stop() {
-	if s.grpcServer != nil {
-		s.grpcServer.GracefulStop()
-	}
-}
+func (s *Server) Read(ctx context.Context, req *proto.ReadRequest) (*proto.ReadResponse, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-// Read implements the Read RPC method
-func (s *Server) Read(req *pb.ReadRequest, stream pb.StorageService_ReadServer) error {
-	// Construct file path
-	filePath := filepath.Join(s.baseDir, req.VideoId, req.Filename)
+	// Get file path
+	filePath := s.getFilePath(req.VideoId, req.Filename)
 
-	// Open file
-	file, err := os.Open(filePath)
+	// Read file
+	data, err := os.ReadFile(filePath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return status.Error(codes.NotFound, "file not found")
-		}
-		return status.Errorf(codes.Internal, "failed to open file: %v", err)
-	}
-	defer file.Close()
-
-	// Read file in chunks
-	buffer := make([]byte, 1024*1024) // 1MB chunks
-	for {
-		n, err := file.Read(buffer)
-		if err != nil && err != io.EOF {
-			return status.Errorf(codes.Internal, "failed to read file: %v", err)
-		}
-		if n > 0 {
-			if err := stream.Send(&pb.ReadResponse{Data: buffer[:n]}); err != nil {
-				return status.Errorf(codes.Internal, "failed to send data: %v", err)
-			}
-		}
-		if err == io.EOF {
-			break
-		}
-	}
-
-	return nil
-}
-
-// Write implements the Write RPC method
-func (s *Server) Write(stream pb.StorageService_WriteServer) error {
-	var req *pb.WriteRequest
-	var err error
-
-	// Get first message to get video_id and filename
-	req, err = stream.Recv()
-	if err != nil {
-		return status.Errorf(codes.Internal, "failed to receive first message: %v", err)
-	}
-
-	// Create video directory
-	videoDir := filepath.Join(s.baseDir, req.VideoId)
-	if err := os.MkdirAll(videoDir, 0755); err != nil {
-		return status.Errorf(codes.Internal, "failed to create video directory: %v", err)
-	}
-
-	// Create file
-	filePath := filepath.Join(videoDir, req.Filename)
-	file, err := os.Create(filePath)
-	if err != nil {
-		return status.Errorf(codes.Internal, "failed to create file: %v", err)
-	}
-	defer file.Close()
-
-	// Write first chunk
-	if _, err := file.Write(req.Data); err != nil {
-		return status.Errorf(codes.Internal, "failed to write first chunk: %v", err)
-	}
-
-	// Write remaining chunks
-	for {
-		req, err = stream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return status.Errorf(codes.Internal, "failed to receive chunk: %v", err)
-		}
-
-		if _, err := file.Write(req.Data); err != nil {
-			return status.Errorf(codes.Internal, "failed to write chunk: %v", err)
-		}
-	}
-
-	// Send response
-	return stream.SendAndClose(&pb.WriteResponse{})
-}
-
-// Delete implements the Delete RPC method
-func (s *Server) Delete(ctx context.Context, req *pb.DeleteRequest) (*pb.DeleteResponse, error) {
-	filePath := filepath.Join(s.baseDir, req.VideoId, req.Filename)
-
-	// Check if file exists
-	if _, err := os.Stat(filePath); err != nil {
 		if os.IsNotExist(err) {
 			return nil, status.Error(codes.NotFound, "file not found")
 		}
-		return nil, status.Errorf(codes.Internal, "failed to check file: %v", err)
+		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to read file: %v", err))
 	}
+
+	return &proto.ReadResponse{
+		Data: data,
+	}, nil
+}
+
+func (s *Server) Write(ctx context.Context, req *proto.WriteRequest) (*proto.WriteResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Get file path
+	filePath := s.getFilePath(req.VideoId, req.Filename)
+
+	// Create parent directory if it doesn't exist
+	parentDir := filepath.Dir(filePath)
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to create parent directory: %v", err))
+	}
+
+	// Write file
+	if err := os.WriteFile(filePath, req.Data, 0644); err != nil {
+		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to write file: %v", err))
+	}
+
+	return &proto.WriteResponse{
+		Size: int64(len(req.Data)),
+	}, nil
+}
+
+func (s *Server) Delete(ctx context.Context, req *proto.DeleteRequest) (*proto.DeleteResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Get file path
+	filePath := s.getFilePath(req.VideoId, req.Filename)
 
 	// Delete file
 	if err := os.Remove(filePath); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to delete file: %v", err)
+		if os.IsNotExist(err) {
+			return nil, status.Error(codes.NotFound, "file not found")
+		}
+		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to delete file: %v", err))
 	}
 
-	// Try to remove video directory if empty
-	videoDir := filepath.Join(s.baseDir, req.VideoId)
-	os.Remove(videoDir) // Ignore error if directory is not empty
+	return &proto.DeleteResponse{}, nil
+}
 
-	return &pb.DeleteResponse{}, nil
+func (s *Server) List(ctx context.Context, req *proto.ListRequest) (*proto.ListResponse, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// List all directories in the root directory
+	entries, err := os.ReadDir(s.rootDir)
+	if err != nil {
+		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to list files: %v", err))
+	}
+
+	// Extract video IDs from directory names
+	var videoIds []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			videoIds = append(videoIds, entry.Name())
+		}
+	}
+
+	return &proto.ListResponse{
+		VideoIds: videoIds,
+	}, nil
 }
