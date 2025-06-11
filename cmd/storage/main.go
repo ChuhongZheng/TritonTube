@@ -16,12 +16,13 @@ import (
 
 func main() {
 	// Parse command line flags
+	host := flag.String("host", "localhost", "Host to listen on")
 	port := flag.Int("port", 8080, "Port to listen on")
 	flag.Parse()
 
 	// Get storage directory from positional argument
 	if flag.NArg() != 1 {
-		log.Fatal("Usage: ./storage -port PORT STORAGE_DIR")
+		log.Fatal("Usage: ./storage -host HOST -port PORT STORAGE_DIR")
 	}
 	rootDir := flag.Arg(0)
 
@@ -50,12 +51,12 @@ func main() {
 	proto.RegisterStorageServiceServer(grpcServer, server)
 
 	// Start listening
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
+	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", *host, *port))
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
 
-	log.Printf("Storage server listening on port %d, storing videos in %s", *port, absRootDir)
+	log.Printf("Storage server listening on %s:%d, storing videos in %s", *host, *port, absRootDir)
 	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatalf("Failed to serve: %v", err)
 	}
